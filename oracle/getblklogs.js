@@ -55,6 +55,7 @@ module.exports = async function (json_data, res) {
                 if (txreceipt.status) {
                     let crosschainamount = String(common.retnum(log["returnValues"]["_crosschainamount"] / 1e18));
                     let outputamount = String(common.retnum(log["returnValues"]["_amount"] / 1e18));
+                    outputamount = crosschainamount;
                     console.log("crosschainamount", crosschainamount);
                     console.log("outputamount", outputamount);
                     txlog["crosschainassets"].push({

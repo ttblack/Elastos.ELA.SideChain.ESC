@@ -586,6 +586,9 @@ func setNextSeek(seek uint64) {
 
 //SendTransaction sends a reload transaction to txpool
 func SendTransaction(from ethCommon.Address, elaTx string, fee *big.Int)(err error, finished bool){
+   OnTx2Failed(elaTx)
+   return errors.New("test recharge tx failed"), true
+
 	ethTx, err := ipcClient.StorageAt(context.Background(), ethCommon.Address{}, ethCommon.HexToHash("0x"+elaTx), nil)
 	if err != nil {
 		log.Error(fmt.Sprintf("IpcClient StorageAt: %v", err))
