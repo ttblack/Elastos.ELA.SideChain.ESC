@@ -2,7 +2,6 @@ package spv
 
 import (
 	"errors"
-
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/log"
 
 	spv "github.com/elastos/Elastos.ELA.SPV/interface"
@@ -76,4 +75,23 @@ func GetWorkingHeight() uint32  {
 		return nextTurnDposInfo.WorkingHeight
 	}
 	return 0
+}
+
+func GetNextturnProducers() ([][]byte, int, uint32)  {
+	peers := make([][]byte, 0)
+	if nextTurnDposInfo == nil {
+		return peers, 0, 0
+	}
+	total := len(nextTurnDposInfo.CRPublicKeys) + len(nextTurnDposInfo.DPOSPublicKeys)
+	for _, arbiter := range nextTurnDposInfo.CRPublicKeys {
+		if len(arbiter) > 0 {
+			peers = append(peers, arbiter)
+		}
+	}
+	for _, arbiter := range nextTurnDposInfo.DPOSPublicKeys {
+		if len(arbiter) > 0 {
+			peers = append(peers, arbiter)
+		}
+	}
+	return peers, total, nextTurnDposInfo.WorkingHeight
 }

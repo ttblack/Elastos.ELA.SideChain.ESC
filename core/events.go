@@ -60,3 +60,5 @@ type SmallCrossTxEvent struct{
 	RawTx string
 	Signatures []string
 }
+
+type ForceUpdateProducers struct {Block *types.Block}

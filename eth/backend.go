@@ -414,7 +414,7 @@ func InitCurrentProducers(engine *pbft.Pbft, config *params.ChainConfig, current
 	mode := spv.GetCurrentConsensusMode()
 	spvHeight := currentBlock.Nonce()
 	if spvHeight <= 0 && mode == _interface.DPOS && len(engine.GetCurrentProducers()) > 0  {
-		engine.OnInsertBlock(currentBlock)
+		engine.OnInsertBlock(currentBlock, false)
 		return
 	}
 
@@ -460,6 +460,8 @@ func SubscriptEvent(eth *Ethereum, engine consensus.Engine) {
 	var blockEvent = make(chan core.ChainEvent)
 	chainSub := eth.blockchain.SubscribeChainEvent(blockEvent)
 	initProducersSub := eth.EventMux().Subscribe(events.InitCurrentProducers{})
+	var changeProducers = make(chan core.ForceUpdateProducers)
+	changeProducersSub := eth.blockchain.SubscribeUpdateProducerEvent(changeProducers)
 	go func() {
 		for  {
 			select {
@@ -467,7 +469,7 @@ func SubscriptEvent(eth *Ethereum, engine consensus.Engine) {
 				if eth.blockchain.Config().IsPBFTFork(b.Block.Number()) {
 					pbftEngine := engine.(*pbft.Pbft)
 					pbftEngine.AccessFutureBlock(b.Block)
-					pbftEngine.OnInsertBlock(b.Block)
+					pbftEngine.OnInsertBlock(b.Block, false)
 					blocksigner.SelfIsProducer = pbftEngine.IsProducer()
 				}
 			case <-initProducersSub.Chan():
@@ -477,7 +479,13 @@ func SubscriptEvent(eth *Ethereum, engine consensus.Engine) {
 			case <-eth.shutdownChan:
 				chainSub.Unsubscribe()
 				initProducersSub.Unsubscribe()
+				changeProducersSub.Unsubscribe()
 				return
+			case b := <-changeProducers:
+				log.Info("force changeProducers", "b.block", b.Block.GetHeight())
+				pbftEngine := engine.(*pbft.Pbft)
+				pbftEngine.OnInsertBlock(b.Block, true)
+				blocksigner.SelfIsProducer = pbftEngine.IsProducer()
 			}
 		}
 	}()

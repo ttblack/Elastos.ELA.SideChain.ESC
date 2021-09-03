@@ -13,6 +13,7 @@ import (
 
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/common"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/consensus"
+	"github.com/elastos/Elastos.ELA.SideChain.ESC/core"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/core/types"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/dpos"
 	dmsg "github.com/elastos/Elastos.ELA.SideChain.ESC/dpos/msg"
@@ -222,14 +223,14 @@ func (p *Pbft) AccessFutureBlock(parent *types.Block) {
 	}
 }
 
-func (p *Pbft) OnInsertBlock(block *types.Block) bool {
+func (p *Pbft) OnInsertBlock(block *types.Block, force bool) bool {
 	if p.dispatcher == nil {
 		return false
 	}
 	dutyIndex := p.dispatcher.GetConsensusView().GetDutyIndex()
 	isWorkingHeight := spv.SpvIsWorkingHeight()
-	log.Info("[OnInsertBlock]", "dutyIndex", dutyIndex, "isWorkingHeight", isWorkingHeight)
-	if dutyIndex == 0 && isWorkingHeight {
+	log.Info("[OnInsertBlock]", "dutyIndex", dutyIndex, "isWorkingHeight", isWorkingHeight, "force", force)
+	if dutyIndex == 0 && isWorkingHeight || isWorkingHeight && force {
 		curProducers := p.dispatcher.GetConsensusView().GetProducers()
 		isSame := p.dispatcher.GetConsensusView().IsSameProducers(curProducers)
 		if !isSame {
@@ -305,9 +306,12 @@ func (p *Pbft) OnResponseBlocks(id peer.PID, blockConfirms []*dmsg.BlockMsg) {
 }
 
 func (p *Pbft) OnRequestConsensus(id peer.PID, height uint64) {
-	log.Info("------- [OnRequestConsensus] -------")
+	log.Info("------- [OnRequestConsensus] -------", "pid", id.String())
 	if !p.IsProducer() {
-		log.Warn("------- not a producer -------")
+		if spv.SpvIsWorkingHeight() {
+			fmt.Println("OnRequestConsensus recoverAbnormalState ")
+			go p.Recover()
+		}
 		return
 	}
 
@@ -320,7 +324,8 @@ func (p *Pbft) OnRequestConsensus(id peer.PID, height uint64) {
 
 func (p *Pbft) OnResponseConsensus(id peer.PID, status *dmsg.ConsensusStatus) {
 	log.Info("---------[OnResponseConsensus]------------")
-	if !p.IsProducer() {
+	if !p.IsProducer() && !spv.SpvIsWorkingHeight() {
+		log.Info("--------is not producer && not working height------------")
 		return
 	}
 	if !p.recoverStarted {
@@ -469,7 +474,7 @@ func (p *Pbft) OnBadNetwork() {
 }
 
 func (p *Pbft) OnRecover() {
-	if p.account == nil || !p.dispatcher.IsProducer(p.account.PublicKeyBytes()) {
+	if p.account == nil {
 		return
 	}
 	p.recoverAbnormalState()
@@ -500,6 +505,7 @@ func (p *Pbft) recoverAbnormalState() bool {
 }
 
 func (p *Pbft) OnRecoverTimeout() {
+	fmt.Println("OnRecoverTimeout", "p.recoverStarted", p.recoverStarted, "len(p.statusMap)", len(p.statusMap))
 	if p.recoverStarted == true {
 		if len(p.statusMap) != 0 {
 			p.DoRecover()
@@ -536,6 +542,13 @@ func (p *Pbft) DoRecover() {
 		return startTimes[i] < startTimes[j]
 	})
 	medianTime := medianOf(startTimes)
+	if p.dispatcher.GetConsensusView().GetWorkingHeight() != status.WorkingHeight {
+		var events []interface{}
+		evt := core.ForceUpdateProducers{Block: p.chain.CurrentBlock()}
+		events = append(events, evt)
+		p.chain.PostChainEvents(events, nil)
+		log.Info("force update next turn producers", "status working height", status.WorkingHeight)
+	}
 	p.dispatcher.RecoverAbnormal(status, medianTime)
 	p.notHandledProposal = make(map[string]struct{})
 }

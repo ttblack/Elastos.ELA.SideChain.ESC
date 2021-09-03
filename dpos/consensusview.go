@@ -88,6 +88,10 @@ func (v *ConsensusView) SetWorkingHeight(workingHeight uint64) {
 	v.producers.SetWorkingHeight(workingHeight)
 }
 
+func (v *ConsensusView) GetWorkingHeight() uint64 {
+	return v.producers.GetWorkingHeight()
+}
+
 func (v *ConsensusView) GetNeedConnectArbiters() []peer.PID {
 	return v.producers.GetNeedConnectArbiters()
 }

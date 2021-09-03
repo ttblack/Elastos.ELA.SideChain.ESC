@@ -65,6 +65,10 @@ func (p *Producers) SetWorkingHeight(changeHeight uint64) {
 	p.workingHeight = changeHeight
 }
 
+func (p *Producers) GetWorkingHeight() uint64 {
+	return p.workingHeight
+}
+
 func (p *Producers) UpdateNextProducers(producers []peer.PID, totalCount int) error {
 	p.mtx.Lock()
 	defer p.mtx.Unlock()

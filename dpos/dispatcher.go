@@ -366,6 +366,10 @@ func (d *Dispatcher) RecoverAbnormal(status *dmsg.ConsensusStatus, medianTime in
 }
 
 func (d *Dispatcher) RecoverFromConsensusStatus(status *dmsg.ConsensusStatus) error {
+	nowWorkingHeight := d.consensusView.producers.GetWorkingHeight()
+	if nowWorkingHeight > status.WorkingHeight {
+		return errors.New(fmt.Sprintf("status working height is smaller, status working height:%d", status.WorkingHeight))
+	}
 	d.consensusView.consensusStatus = status.ConsensusStatus
 	d.acceptVotes = make(map[common.Uint256]*payload.DPOSProposalVote)
 	for _, v := range status.AcceptVotes {
