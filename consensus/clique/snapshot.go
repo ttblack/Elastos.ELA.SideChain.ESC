@@ -182,7 +182,7 @@ func (s *Snapshot) uncast(address common.Address, authorize bool) bool {
 
 // apply creates a new authorization snapshot by applying the given headers to
 // the original one.
-func (s *Snapshot) apply(headers []*types.Header, isBeforeChangeEngine bool) (*Snapshot, error) {
+func (s *Snapshot) apply(headers []*types.Header) (*Snapshot, error) {
 	// Allow passing in no headers for cleaner code
 	if len(headers) == 0 {
 		return s, nil
@@ -224,12 +224,7 @@ func (s *Snapshot) apply(headers []*types.Header, isBeforeChangeEngine bool) (*S
 		}
 		for _, recent := range snap.Recents {
 			if recent == signer {
-				if isBeforeChangeEngine && header.Difficulty == diffInTurn {
-					break
-				} else {
-					log.Info("apply", "isBeforeChangeEngine", isBeforeChangeEngine, "diffculty", header.Difficulty.Uint64())
-					return nil, errRecentlySigned
-				}
+				return nil, errRecentlySigned
 			}
 		}
 		snap.Recents[number] = signer

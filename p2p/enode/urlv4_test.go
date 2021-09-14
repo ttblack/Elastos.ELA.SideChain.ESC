@@ -18,6 +18,7 @@ package enode
 
 import (
 	"crypto/ecdsa"
+	"errors"
 	"net"
 	"reflect"
 	"strings"
@@ -27,6 +28,15 @@ import (
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/p2p/enr"
 )
 
+func init() {
+	lookupIPFunc = func(name string) ([]net.IP, error) {
+		if name == "node.example.org" {
+			return []net.IP{{33, 44, 55, 66}}, nil
+		}
+		return nil, errors.New("no such host")
+	}
+}
+
 var parseNodeTests = []struct {
 	input      string
 	wantError  string
@@ -34,12 +44,12 @@ var parseNodeTests = []struct {
 }{
 	// Records
 	{
-		input: "enr:-IS4QFnnrMQ6-_-9AVKDzul4zCqiBhMkGsPV7KScNYE6eWmJQzPwTcmNZGtjGXNmqIxJ2g5Tny4G0vyAU44lVwLaJyljgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQM6UUF2Rm-oFe1IH_rQkRCi00T2ybeMHRSvw1HDpRvjPYN1ZHCCUJ4",
+		input: "enr:-IS4QGrdq0ugARp5T2BZ41TrZOqLc_oKvZoPuZP5--anqWE_J-Tucc1xgkOL7qXl0puJgT7qc2KSvcupc4NCb0nr4tdjgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQM6UUF2Rm-oFe1IH_rQkRCi00T2ybeMHRSvw1HDpRvjPYN1ZHCCdl8",
 		wantResult: func() *Node {
 			testKey, _ := crypto.HexToECDSA("45a915e4d060149eb4365960e6a7a45f334393093061116b197e3240065ff2d8")
 			var r enr.Record
 			r.Set(enr.IP{127, 0, 0, 1})
-			r.Set(enr.UDP(20638))
+			r.Set(enr.UDP(30303))
 			r.SetSeq(99)
 			SignV4(&r, testKey)
 			n, _ := New(ValidSchemes, &r)
@@ -61,7 +71,7 @@ var parseNodeTests = []struct {
 	},
 	// Complete node URLs with IP address and ports
 	{
-		input:     "enode://1dd9d65c4552b5eb43d5ad55a2ee3f56c6cbc1c64a5c8d659f51fcd51bace24351232b8d7821617d2b29b54b81cdefb9b3e9c37d7fd5f63270bcc9e1a6f6a439@:3",
+		input:     "enode://1dd9d65c4552b5eb43d5ad55a2ee3f56c6cbc1c64a5c8d659f51fcd51bace24351232b8d7821617d2b29b54b81cdefb9b3e9c37d7fd5f63270bcc9e1a6f6a439@invalid.:3",
 		wantError: `no such host`,
 	},
 	{

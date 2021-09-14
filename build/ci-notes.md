@@ -25,7 +25,7 @@ version that is available in the main Ubuntu repository. In order to make this p
 we bundle the entire Go sources into our own source archive and start the built job by
 compiling Go and then using that to build Elastos.ELA.SideChain.ESC. On Trusty we have a special case
 requiring the `~gophers/ubuntu/archive` PPA since Trusty can't even build Go itself. PPA
-deps are set at https://launchpad.net/%7Eethereum/+archive/ubuntu/elastos/+edit-dependencies
+deps are set at https://launchpad.net/%7Eethereum/+archive/ubuntu/ethereum/+edit-dependencies
 
 ## Building Packages Locally (for testing)
 
@@ -41,7 +41,7 @@ Create the source packages:
 
 Then go into the source package directory for your running distribution and build the package:
 
-    $ cd dist/elastos-unstable-1.9.6+bionic
+    $ cd dist/ethereum-unstable-1.9.6+bionic
     $ dpkg-buildpackage
 
 Built packages are placed in the dist/ directory.

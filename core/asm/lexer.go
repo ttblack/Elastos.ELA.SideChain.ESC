@@ -234,7 +234,7 @@ func lexComment(l *lexer) stateFn {
 // the lex text state function to advance the parsing
 // process.
 func lexLabel(l *lexer) stateFn {
-	l.acceptRun(Alpha + "_")
+	l.acceptRun(Alpha + "_" + Numbers)
 
 	l.emit(label)
 
@@ -254,7 +254,7 @@ func lexInsideString(l *lexer) stateFn {
 
 func lexNumber(l *lexer) stateFn {
 	acceptance := Numbers
-	if l.accept("0") || l.accept("xX") {
+	if l.accept("xX") {
 		acceptance = HexadecimalNumbers
 	}
 	l.acceptRun(acceptance)

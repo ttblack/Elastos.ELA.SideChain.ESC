@@ -37,12 +37,15 @@ func TestState(t *testing.T) {
 	st.slow(`^stQuadraticComplexityTest/`)
 	st.slow(`^stStaticCall/static_Call50000`)
 	st.slow(`^stStaticCall/static_Return50000`)
-	st.slow(`^stStaticCall/static_Call1MB`)
 	st.slow(`^stSystemOperationsTest/CallRecursiveBomb`)
 	st.slow(`^stTransactionTest/Opcodes_TransactionInit`)
 
 	// Very time consuming
 	st.skipLoad(`^stTimeConsuming/`)
+	st.skipLoad(`.*vmPerformance/loop.*`)
+
+	// Uses 1GB RAM per tested fork
+	st.skipLoad(`^stStaticCall/static_Call1MB`)
 
 	// Broken tests:
 	// Expected failures:
@@ -53,33 +56,44 @@ func TestState(t *testing.T) {
 	//st.fails(`^stRevertTest/RevertPrecompiledTouch(_storage)?\.json/ConstantinopleFix/0`, "bug in test")
 	//st.fails(`^stRevertTest/RevertPrecompiledTouch(_storage)?\.json/ConstantinopleFix/3`, "bug in test")
 
-	st.walk(t, stateTestDir, func(t *testing.T, name string, test *StateTest) {
-		for _, subtest := range test.Subtests() {
-			subtest := subtest
-			key := fmt.Sprintf("%s/%d", subtest.Fork, subtest.Index)
-			name := name + "/" + key
-			t.Run(key, func(t *testing.T) {
-				withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
-					_, err := test.Run(subtest, vmconfig)
-					return st.checkFailure(t, name, err)
-				})
-			})
-		}
-	})
 	// For Istanbul, older tests were moved into LegacyTests
-	st.walk(t, legacyStateTestDir, func(t *testing.T, name string, test *StateTest) {
-		for _, subtest := range test.Subtests() {
-			subtest := subtest
-			key := fmt.Sprintf("%s/%d", subtest.Fork, subtest.Index)
-			name := name + "/" + key
-			t.Run(key, func(t *testing.T) {
-				withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
-					_, err := test.Run(subtest, vmconfig)
-					return st.checkFailure(t, name, err)
+	for _, dir := range []string{
+		stateTestDir,
+		legacyStateTestDir,
+	} {
+		st.walk(t, dir, func(t *testing.T, name string, test *StateTest) {
+			for _, subtest := range test.Subtests() {
+				subtest := subtest
+				key := fmt.Sprintf("%s/%d", subtest.Fork, subtest.Index)
+
+				t.Run(key+"/trie", func(t *testing.T) {
+					withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
+						_, _, err := test.Run(subtest, vmconfig, false)
+						if err != nil && len(test.json.Post[subtest.Fork][subtest.Index].ExpectException) > 0 {
+							// Ignore expected errors (TODO MariusVanDerWijden check error string)
+							return nil
+						}
+						return st.checkFailure(t, err)
+					})
 				})
-			})
-		}
-	})
+				t.Run(key+"/snap", func(t *testing.T) {
+					withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
+						snaps, statedb, err := test.Run(subtest, vmconfig, true)
+						if snaps != nil && statedb != nil {
+							if _, err := snaps.Journal(statedb.IntermediateRoot(false)); err != nil {
+								return err
+							}
+						}
+						if err != nil && len(test.json.Post[subtest.Fork][subtest.Index].ExpectException) > 0 {
+							// Ignore expected errors (TODO MariusVanDerWijden check error string)
+							return nil
+						}
+						return st.checkFailure(t, err)
+					})
+				})
+			}
+		})
+	}
 }
 
 // Transactions with gasLimit above this value will not get a VM trace on failure.
@@ -87,7 +101,7 @@ const traceErrorLimit = 400000
 
 func withTrace(t *testing.T, gasLimit uint64, test func(vm.Config) error) {
 	// Use config from command line arguments.
-	config := vm.Config{EVMInterpreter: *testEVM, EWASMInterpreter: *testEWASM}
+	config := vm.Config{}
 	err := test(config)
 	if err == nil {
 		return
@@ -113,6 +127,6 @@ func withTrace(t *testing.T, gasLimit uint64, test func(vm.Config) error) {
 	} else {
 		t.Log("EVM operation log:\n" + buf.String())
 	}
-	//t.Logf("EVM output: 0x%x", tracer.Output())
-	//t.Logf("EVM error: %v", tracer.Error())
+	// t.Logf("EVM output: 0x%x", tracer.Output())
+	// t.Logf("EVM error: %v", tracer.Error())
 }

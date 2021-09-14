@@ -113,12 +113,16 @@ type ChainSyncReader interface {
 
 // CallMsg contains parameters for contract calls.
 type CallMsg struct {
-	From     common.Address  // the sender of the 'transaction'
-	To       *common.Address // the destination contract (nil for contract creation)
-	Gas      uint64          // if 0, the call executes with near-infinite gas
-	GasPrice *big.Int        // wei <-> gas exchange ratio
-	Value    *big.Int        // amount of wei sent along with the call
-	Data     []byte          // input data, usually an ABI-encoded contract method invocation
+	From      common.Address  // the sender of the 'transaction'
+	To        *common.Address // the destination contract (nil for contract creation)
+	Gas       uint64          // if 0, the call executes with near-infinite gas
+	GasPrice  *big.Int        // wei <-> gas exchange ratio
+	GasFeeCap *big.Int        // EIP-1559 fee cap per gas.
+	GasTipCap *big.Int        // EIP-1559 tip per gas.
+	Value     *big.Int        // amount of wei sent along with the call
+	Data      []byte          // input data, usually an ABI-encoded contract method invocation
+
+	AccessList types.AccessList // EIP-2930 access list.
 }
 
 // A ContractCaller provides contract calls, essentially transactions that are executed by
@@ -158,20 +162,6 @@ type FilterQuery struct {
 type LogFilterer interface {
 	FilterLogs(ctx context.Context, q FilterQuery) ([]types.Log, error)
 	SubscribeFilterLogs(ctx context.Context, q FilterQuery, ch chan<- types.Log) (Subscription, error)
-}
-
-// TxMsg contains parameters for contract calls.
-type TXMsg struct {
-	From     common.Address
-	To       *common.Address
-	Gas      uint64
-	GasPrice *big.Int
-	Value    *big.Int
-	Nonce    uint64
-	// We accept "data" and "input" for backwards-compatibility reasons. "input" is the
-	// newer name and should be preferred by clients.
-	Data  []byte
-	Input []byte
 }
 
 // TransactionSender wraps transaction sending. The SendTransaction method injects a

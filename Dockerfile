@@ -1,16 +1,28 @@
-# Build Geth in a stock Go builder container
-FROM golang:1.13-alpine as builder
+# Support setting various labels on the final image
+ARG COMMIT=""
+ARG VERSION=""
+ARG BUILDNUM=""
 
-RUN apk add --no-cache make gcc musl-dev linux-headers git
+# Build Geth in a stock Go builder container
+FROM golang:1.17-alpine as builder
+
+RUN apk add --no-cache gcc musl-dev linux-headers git
 
 ADD . /Elastos.ELA.SideChain.ESC
-RUN cd /Elastos.ELA.SideChain.ESC && make geth bootnode
+RUN cd /Elastos.ELA.SideChain.ESC && go run build/ci.go install ./cmd/geth
 
 # Pull Geth into a second stage deploy alpine container
 FROM alpine:latest
 
 RUN apk add --no-cache ca-certificates
-COPY --from=builder /Elastos.ELA.SideChain.ESC/build/bin/* /usr/local/bin/
+COPY --from=builder /Elastos.ELA.SideChain.ESC/build/bin/geth /usr/local/bin/
 
-EXPOSE 20636 20635 8547 20638 20638/udp
-#ENTRYPOINT ["geth"]
+EXPOSE 8545 8546 30303 30303/udp
+ENTRYPOINT ["geth"]
+
+# Add some metadata labels to help programatic image consumption
+ARG COMMIT=""
+ARG VERSION=""
+ARG BUILDNUM=""
+
+LABEL commit="$COMMIT" version="$VERSION" buildnum="$BUILDNUM"

@@ -22,6 +22,7 @@ import (
 	"fmt"
 
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/common"
+	"github.com/elastos/Elastos.ELA.SideChain.ESC/core/rawdb"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/core/state"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/core/types"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/crypto"
@@ -29,8 +30,12 @@ import (
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/trie"
 )
 
+var (
+	sha3Nil = crypto.Keccak256Hash(nil)
+)
+
 func NewState(ctx context.Context, head *types.Header, odr OdrBackend) *state.StateDB {
-	state, _ := state.New(head.Root, NewStateDatabase(ctx, head, odr))
+	state, _ := state.New(head.Root, NewStateDatabase(ctx, head, odr), nil)
 	return state
 }
 
@@ -70,7 +75,8 @@ func (db *odrDatabase) ContractCode(addrHash, codeHash common.Hash) ([]byte, err
 	if codeHash == sha3Nil {
 		return nil, nil
 	}
-	if code, err := db.backend.Database().Get(codeHash[:]); err == nil {
+	code := rawdb.ReadCode(db.backend.Database(), codeHash)
+	if len(code) != 0 {
 		return code, nil
 	}
 	id := *db.id
@@ -119,9 +125,9 @@ func (t *odrTrie) TryDelete(key []byte) error {
 	})
 }
 
-func (t *odrTrie) Commit(onleaf trie.LeafCallback) (common.Hash, error) {
+func (t *odrTrie) Commit(onleaf trie.LeafCallback) (common.Hash, int, error) {
 	if t.trie == nil {
-		return t.id.Root, nil
+		return t.id.Root, 0, nil
 	}
 	return t.trie.Commit(onleaf)
 }

@@ -21,7 +21,7 @@ package geth
 import (
 	"errors"
 
-	ethereum "github.com/elastos/Elastos.ELA.SideChain.ESC"
+	"github.com/elastos/Elastos.ELA.SideChain.ESC"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/common"
 )
 

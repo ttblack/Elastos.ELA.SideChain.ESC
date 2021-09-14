@@ -72,10 +72,6 @@ type LightChain struct {
 	running          int32 // whether LightChain is running or stopped
 	procInterrupt    int32 // interrupts chain insert
 	disableCheckFreq int32 // disables header verification
-
-	evilSigners *core.EvilSignersMap // EvilSigners contains evil signers
-	evilmu      sync.RWMutex         // evil signers lock
-	journal     *core.EvilJournal    // Journal of local  evilSingeerEvents to back up to disk
 }
 
 // NewLightChain returns a fully initialised light chain using information
@@ -95,15 +91,12 @@ func NewLightChain(odr OdrBackend, config *params.ChainConfig, engine consensus.
 		bodyRLPCache:  bodyRLPCache,
 		blockCache:    blockCache,
 		engine:        engine,
-		journal:       core.NewEvilJournal(config.EvilSignersJournalDir),
 	}
 	var err error
 	bc.hc, err = core.NewHeaderChain(odr.Database(), config, bc.engine, bc.getProcInterrupt)
 	if err != nil {
 		return nil, err
 	}
-	bc.SetPOAEngine(engine)
-	bc.SetDposEngine(bc.engine)
 	bc.genesisBlock, _ = bc.GetBlockByNumber(NoOdr, 0)
 	if bc.genesisBlock == nil {
 		return nil, core.ErrNoGenesis
@@ -119,35 +112,10 @@ func NewLightChain(odr OdrBackend, config *params.ChainConfig, engine consensus.
 		if header := bc.GetHeaderByHash(hash); header != nil {
 			log.Error("Found bad hash, rewinding chain", "number", header.Number, "hash", header.ParentHash)
 			bc.SetHead(header.Number.Uint64() - 1)
-			log.Error("Chain rewind was successful, resuming normal operation")
-		}
-	}
-
-	if bc.journal != nil {
-		if err := bc.journal.Load(bc.addEvilSingerEvents); err != nil {
-			log.Warn("Failed to load evil singer events journal", "err", err)
-		}
-		if err := bc.removeOldEvilSigners(bc.CurrentHeader().Number, 0); err != nil {
-			log.Warn("Failed to remove old evil signers", "err", err)
-		}
-		if err := bc.journal.Rotate(bc.getEvilSignerEvents()); err != nil {
-			log.Warn("Failed to rotate evil singer events ournal", "err", err)
+			log.Info("Chain rewind was successful, resuming normal operation")
 		}
 	}
 	return bc, nil
-}
-
-func (lc *LightChain) SetEngine(engine consensus.Engine) {
-	lc.engine = engine
-	lc.hc.SetEngine(engine)
-}
-
-func (lc *LightChain) SetDposEngine(engine consensus.Engine) {
-	lc.hc.SetDposChain(engine)
-}
-
-func (lc *LightChain) SetPOAEngine(engine consensus.Engine) {
-	lc.hc.SetPOAEngine(engine)
 }
 
 // AddTrustedCheckpoint adds a trusted checkpoint to the blockchain
@@ -175,6 +143,11 @@ func (lc *LightChain) Odr() OdrBackend {
 	return lc.odr
 }
 
+// HeaderChain returns the underlying header chain.
+func (lc *LightChain) HeaderChain() *core.HeaderChain {
+	return lc.hc
+}
+
 // loadLastState loads the last known chain state from the database. This method
 // assumes that the chain manager mutex is held.
 func (lc *LightChain) loadLastState() error {
@@ -182,16 +155,18 @@ func (lc *LightChain) loadLastState() error {
 		// Corrupt or empty database, init from scratch
 		lc.Reset()
 	} else {
-		if header := lc.GetHeaderByHash(head); header != nil {
+		header := lc.GetHeaderByHash(head)
+		if header == nil {
+			// Corrupt or empty database, init from scratch
+			lc.Reset()
+		} else {
 			lc.hc.SetCurrentHeader(header)
 		}
 	}
-
 	// Issue a status log and return
 	header := lc.hc.CurrentHeader()
 	headerTd := lc.GetTd(header.Hash(), header.Number.Uint64())
 	log.Info("Loaded most recent local header", "number", header.Number, "hash", header.Hash(), "td", headerTd, "age", common.PrettyAge(time.Unix(int64(header.Time), 0)))
-
 	return nil
 }
 
@@ -225,9 +200,13 @@ func (lc *LightChain) ResetWithGenesisBlock(genesis *types.Block) {
 	defer lc.chainmu.Unlock()
 
 	// Prepare the genesis block and reinitialise the chain
-	rawdb.WriteTd(lc.chainDb, genesis.Hash(), genesis.NumberU64(), genesis.Difficulty())
-	rawdb.WriteBlock(lc.chainDb, genesis)
-
+	batch := lc.chainDb.NewBatch()
+	rawdb.WriteTd(batch, genesis.Hash(), genesis.NumberU64(), genesis.Difficulty())
+	rawdb.WriteBlock(batch, genesis)
+	rawdb.WriteHeadHeaderHash(batch, genesis.Hash())
+	if err := batch.Write(); err != nil {
+		log.Crit("Failed to reset genesis block", "err", err)
+	}
 	lc.genesisBlock = genesis
 	lc.hc.SetGenesis(lc.genesisBlock.Header())
 	lc.hc.SetCurrentHeader(lc.genesisBlock.Header())
@@ -338,13 +317,16 @@ func (lc *LightChain) Stop() {
 		return
 	}
 	close(lc.quit)
-	atomic.StoreInt32(&lc.procInterrupt, 1)
-
+	lc.StopInsert()
 	lc.wg.Wait()
-	if lc.journal != nil {
-		lc.journal.Close()
-	}
-	log.Info("Blockchain manager stopped")
+	log.Info("Blockchain stopped")
+}
+
+// StopInsert interrupts all insertion methods, causing them to return
+// errInsertionInterrupted as soon as possible. Insertion is permanently disabled after
+// calling this method.
+func (lc *LightChain) StopInsert() {
+	atomic.StoreInt32(&lc.procInterrupt, 1)
 }
 
 // Rollback is designed to remove a chain of links from the database that aren't
@@ -353,12 +335,21 @@ func (lc *LightChain) Rollback(chain []common.Hash) {
 	lc.chainmu.Lock()
 	defer lc.chainmu.Unlock()
 
+	batch := lc.chainDb.NewBatch()
 	for i := len(chain) - 1; i >= 0; i-- {
 		hash := chain[i]
 
+		// Degrade the chain markers if they are explicitly reverted.
+		// In theory we should update all in-memory markers in the
+		// last step, however the direction of rollback is from high
+		// to low, so it's safe the update in-memory markers directly.
 		if head := lc.hc.CurrentHeader(); head.Hash() == hash {
+			rawdb.WriteHeadHeaderHash(batch, head.ParentHash)
 			lc.hc.SetCurrentHeader(lc.GetHeader(head.ParentHash, head.Number.Uint64()-1))
 		}
+	}
+	if err := batch.Write(); err != nil {
+		log.Crit("Failed to rollback light chain", "error", err)
 	}
 }
 
@@ -390,28 +381,6 @@ func (lc *LightChain) postChainEvents(events []interface{}) {
 // In the case of a light chain, InsertHeaderChain also creates and posts light
 // chain events when necessary.
 func (lc *LightChain) InsertHeaderChain(chain []*types.Header, checkFreq int) (int, error) {
-	if lc.hc.Config().IsPBFTFork(chain[0].Number) {
-		return lc.InsertBlockHeaders(chain, checkFreq)
-	}
-	limit := lc.hc.Config().PBFTBlock.Uint64() - chain[0].Number.Uint64()
-	if limit >= uint64(len(chain)) {
-		return lc.InsertBlockHeaders(chain, checkFreq)
-	}
-	cliqueChain := chain[:limit]
-	n, err := lc.InsertBlockHeaders(cliqueChain, checkFreq)
-	if err != nil {
-		return n, err
-	}
-
-	pbftChain := chain[limit:]
-	n, err = lc.InsertBlockHeaders(pbftChain, checkFreq)
-	if err != nil {
-		return n, err
-	}
-	return 0, nil
-}
-
-func (lc *LightChain) InsertBlockHeaders(chain []*types.Header, checkFreq int) (int, error) {
 	if atomic.LoadInt32(&lc.disableCheckFreq) == 1 {
 		checkFreq = 0
 	}
@@ -427,31 +396,26 @@ func (lc *LightChain) InsertBlockHeaders(chain []*types.Header, checkFreq int) (
 	lc.wg.Add(1)
 	defer lc.wg.Done()
 
-	var events []interface{}
-	whFunc := func(header *types.Header) error {
-		status := core.SideStatTy
-		var err error
-		isToMany := lc.isToManyEvilSigners(header)
-		if isToMany {
-			err = errors.New("too many evil signers on the chain")
-			log.Error(err.Error())
-		} else {
-			status, err = lc.hc.WriteHeader(header)
-		}
-		switch status {
-		case core.CanonStatTy:
-			log.Debug("Inserted new header", "number", header.Number, "hash", header.Hash())
-			events = append(events, core.ChainEvent{Block: types.NewBlockWithHeader(header), Hash: header.Hash()})
-
-		case core.SideStatTy:
-			log.Debug("Inserted forked header", "number", header.Number, "hash", header.Hash())
-			events = append(events, core.ChainSideEvent{Block: types.NewBlockWithHeader(header)})
-		}
-		return err
+	status, err := lc.hc.InsertHeaderChain(chain, start)
+	if err != nil || len(chain) == 0 {
+		return 0, err
 	}
-	i, err := lc.hc.InsertHeaderChain(chain, whFunc, start)
+
+	// Create chain event for the new head block of this insertion.
+	var (
+		events     = make([]interface{}, 0, 1)
+		lastHeader = chain[len(chain)-1]
+		block      = types.NewBlockWithHeader(lastHeader)
+	)
+	switch status {
+	case core.CanonStatTy:
+		events = append(events, core.ChainEvent{Block: block, Hash: block.Hash()})
+	case core.SideStatTy:
+		events = append(events, core.ChainSideEvent{Block: block})
+	}
 	lc.postChainEvents(events)
-	return i, err
+
+	return 0, err
 }
 
 // CurrentHeader retrieves the current head header of the canonical chain. The
@@ -470,6 +434,17 @@ func (lc *LightChain) GetTd(hash common.Hash, number uint64) *big.Int {
 // database by hash, caching it if found.
 func (lc *LightChain) GetTdByHash(hash common.Hash) *big.Int {
 	return lc.hc.GetTdByHash(hash)
+}
+
+// GetHeaderByNumberOdr retrieves the total difficult from the database or
+// network by hash and number, caching it (associated with its hash) if found.
+func (lc *LightChain) GetTdOdr(ctx context.Context, hash common.Hash, number uint64) *big.Int {
+	td := lc.GetTd(hash, number)
+	if td != nil {
+		return td
+	}
+	td, _ = GetTd(ctx, lc.odr, hash, number)
+	return td
 }
 
 // GetHeader retrieves a block header from the database by hash and number,
@@ -552,6 +527,7 @@ func (lc *LightChain) SyncCheckpoint(ctx context.Context, checkpoint *params.Tru
 		// Ensure the chain didn't move past the latest block while retrieving it
 		if lc.hc.CurrentHeader().Number.Uint64() < header.Number.Uint64() {
 			log.Info("Updated latest header based on CHT", "number", header.Number, "hash", header.Hash(), "age", common.PrettyAge(time.Unix(int64(header.Time), 0)))
+			rawdb.WriteHeadHeaderHash(lc.chainDb, header.Hash())
 			lc.hc.SetCurrentHeader(header)
 		}
 		return true
@@ -605,49 +581,4 @@ func (lc *LightChain) DisableCheckFreq() {
 // EnableCheckFreq enables header validation.
 func (lc *LightChain) EnableCheckFreq() {
 	atomic.StoreInt32(&lc.disableCheckFreq, 0)
-}
-
-func (lc *LightChain) isToManyEvilSigners(header *types.Header) bool {
-	lc.evilmu.Lock()
-	defer lc.evilmu.Unlock()
-	if lc.evilSigners == nil {
-		lc.evilSigners = &core.EvilSignersMap{}
-	}
-	headerOld := lc.GetHeaderByNumber(header.Number.Uint64())
-	if headerOld == nil {
-		return false
-	}
-	return core.IsNeedStopChain(header, headerOld, lc.engine, lc.evilSigners, lc.journal)
-}
-
-// remove old evilSigners who have created  different blocks, and difference between  the blocks height
-// and currentHeight should biger then rangeValue.
-func (lc *LightChain) removeOldEvilSigners(currentHeight *big.Int, rangeValue int64) error {
-	lc.evilmu.Lock()
-	defer lc.evilmu.Unlock()
-	if lc.evilSigners == nil {
-		return nil
-	}
-	//lc.evilSigners.RemoveOldEvilSigners(currentHeight, rangeValue)
-	return nil
-}
-
-// getEvilSignerEvents return evilSignerEvents by now
-func (lc *LightChain) getEvilSignerEvents() (res []*core.EvilSingerEvent) {
-	lc.evilmu.Lock()
-	defer lc.evilmu.Unlock()
-	if lc.evilSigners == nil {
-		lc.evilSigners = &core.EvilSignersMap{}
-	}
-	return lc.evilSigners.GetEvilSignerEvents()
-}
-
-// addEvilSignerEvents add evilSignerEvents of []*EvilSingerEvent.
-func (lc *LightChain) addEvilSingerEvents(evilEvents []*core.EvilSingerEvent) []error {
-	lc.evilmu.Lock()
-	defer lc.evilmu.Unlock()
-	if lc.evilSigners == nil {
-		lc.evilSigners = &core.EvilSignersMap{}
-	}
-	return lc.evilSigners.AddEvilSingerEvents(evilEvents)
 }

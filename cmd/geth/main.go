@@ -18,12 +18,8 @@
 package main
 
 import (
-	"errors"
 	"fmt"
-	"math"
 	"os"
-	"runtime"
-	godebug "runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,30 +29,17 @@ import (
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/accounts/keystore"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/cmd/utils"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/common"
-	"github.com/elastos/Elastos.ELA.SideChain.ESC/console"
-	"github.com/elastos/Elastos.ELA.SideChain.ESC/core/events"
+	"github.com/elastos/Elastos.ELA.SideChain.ESC/console/prompt"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/eth"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/eth/downloader"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/ethclient"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/internal/debug"
-	"github.com/elastos/Elastos.ELA.SideChain.ESC/les"
+	"github.com/elastos/Elastos.ELA.SideChain.ESC/internal/ethapi"
+	"github.com/elastos/Elastos.ELA.SideChain.ESC/internal/flags"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/log"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/metrics"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/node"
-	"github.com/elastos/Elastos.ELA.SideChain.ESC/smallcrosstx"
-	"github.com/elastos/Elastos.ELA.SideChain.ESC/spv"
-	"github.com/elastos/Elastos.ELA.SideChain.ESC/withdrawfailedtx"
-
-	elacom "github.com/elastos/Elastos.ELA/common"
-	"github.com/elastos/Elastos.ELA/core/contract"
-
-	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
-	"github.com/elastic/gosigar"
-	"golang.org/x/crypto/ripemd160"
 	"gopkg.in/urfave/cli.v1"
-	"path/filepath"
 )
 
 const (
@@ -68,32 +51,30 @@ var (
 	gitCommit = ""
 	gitDate   = ""
 	// The app that holds all commands and flags.
-	app = utils.NewApp(gitCommit, gitDate, "the Elastos.ELA.SideChain.ESC command line interface")
+	app = flags.NewApp(gitCommit, gitDate, "the Elastos.ELA.SideChain.ESC command line interface")
 	// flags that configure the node
 	nodeFlags = []cli.Flag{
 		utils.IdentityFlag,
 		utils.UnlockedAccountFlag,
 		utils.PasswordFileFlag,
 		utils.BootnodesFlag,
-		utils.BootnodesV4Flag,
-		utils.BootnodesV5Flag,
 		utils.DataDirFlag,
 		utils.AncientFlag,
+		utils.MinFreeDiskSpaceFlag,
 		utils.KeyStoreDirFlag,
 		utils.ExternalSignerFlag,
 		utils.NoUSBFlag,
+		utils.USBFlag,
 		utils.SmartCardDaemonPathFlag,
-		utils.OverrideIstanbulFlag,
-		utils.DashboardEnabledFlag,
-		utils.DashboardAddrFlag,
-		utils.DashboardPortFlag,
-		utils.DashboardRefreshFlag,
+		utils.OverrideLondonFlag,
 		utils.EthashCacheDirFlag,
 		utils.EthashCachesInMemoryFlag,
 		utils.EthashCachesOnDiskFlag,
+		utils.EthashCachesLockMmapFlag,
 		utils.EthashDatasetDirFlag,
 		utils.EthashDatasetsInMemoryFlag,
 		utils.EthashDatasetsOnDiskFlag,
+		utils.EthashDatasetsLockMmapFlag,
 		utils.TxPoolLocalsFlag,
 		utils.TxPoolNoLocalsFlag,
 		utils.TxPoolJournalFlag,
@@ -108,49 +89,53 @@ var (
 		utils.SyncModeFlag,
 		utils.ExitWhenSyncedFlag,
 		utils.GCModeFlag,
+		utils.SnapshotFlag,
+		utils.TxLookupLimitFlag,
 		utils.LightServeFlag,
-		utils.LightLegacyServFlag,
 		utils.LightIngressFlag,
 		utils.LightEgressFlag,
 		utils.LightMaxPeersFlag,
-		utils.LightLegacyPeersFlag,
+		utils.LightNoPruneFlag,
 		utils.LightKDFFlag,
 		utils.UltraLightServersFlag,
 		utils.UltraLightFractionFlag,
 		utils.UltraLightOnlyAnnounceFlag,
+		utils.LightNoSyncServeFlag,
 		utils.WhitelistFlag,
+		utils.BloomFilterSizeFlag,
 		utils.CacheFlag,
 		utils.CacheDatabaseFlag,
 		utils.CacheTrieFlag,
+		utils.CacheTrieJournalFlag,
+		utils.CacheTrieRejournalFlag,
 		utils.CacheGCFlag,
+		utils.CacheSnapshotFlag,
 		utils.CacheNoPrefetchFlag,
+		utils.CachePreimagesFlag,
 		utils.ListenPortFlag,
 		utils.MaxPeersFlag,
 		utils.MaxPendingPeersFlag,
 		utils.MiningEnabledFlag,
 		utils.MinerThreadsFlag,
-		utils.MinerLegacyThreadsFlag,
 		utils.MinerNotifyFlag,
-		utils.MinerGasTargetFlag,
-		utils.MinerLegacyGasTargetFlag,
+		utils.LegacyMinerGasTargetFlag,
 		utils.MinerGasLimitFlag,
 		utils.MinerGasPriceFlag,
-		utils.MinerLegacyGasPriceFlag,
 		utils.MinerEtherbaseFlag,
-		utils.MinerLegacyEtherbaseFlag,
 		utils.MinerExtraDataFlag,
-		utils.MinerLegacyExtraDataFlag,
 		utils.MinerRecommitIntervalFlag,
-		utils.MinerNoVerfiyFlag,
+		utils.MinerNoVerifyFlag,
 		utils.NATFlag,
 		utils.NoDiscoverFlag,
 		utils.DiscoveryV5Flag,
 		utils.NetrestrictFlag,
 		utils.NodeKeyFileFlag,
 		utils.NodeKeyHexFlag,
+		utils.DNSDiscoveryFlag,
+		utils.MainnetFlag,
 		utils.DeveloperFlag,
 		utils.DeveloperPeriodFlag,
-		utils.TestnetFlag,
+		utils.RopstenFlag,
 		utils.RinkebyFlag,
 		utils.GoerliFlag,
 		utils.VMEnableDebugFlag,
@@ -160,59 +145,53 @@ var (
 		utils.NoCompactionFlag,
 		utils.GpoBlocksFlag,
 		utils.GpoPercentileFlag,
-		utils.EWASMInterpreterFlag,
-		utils.EVMInterpreterFlag,
+		utils.GpoMaxGasPriceFlag,
+		utils.GpoIgnoreGasPriceFlag,
+		utils.MinerNotifyFullFlag,
 		configFileFlag,
-		utils.SpvMonitoringAddrFlag,
-		utils.PassBalance,
-		utils.BlackContractAddr,
-		utils.PreConnectOffset,
-		utils.PbftKeyStore,
-		utils.PbftKeystorePassWord,
-		utils.PbftIPAddress,
-		utils.PbftDposPort,
-		utils.DynamicArbiter,
+		utils.CatalystFlag,
 	}
 
 	rpcFlags = []cli.Flag{
-		utils.RPCEnabledFlag,
-		utils.RPCListenAddrFlag,
-		utils.RPCPortFlag,
-		utils.RPCCORSDomainFlag,
-		utils.RPCVirtualHostsFlag,
+		utils.HTTPEnabledFlag,
+		utils.HTTPListenAddrFlag,
+		utils.HTTPPortFlag,
+		utils.HTTPCORSDomainFlag,
+		utils.HTTPVirtualHostsFlag,
 		utils.GraphQLEnabledFlag,
-		utils.GraphQLListenAddrFlag,
-		utils.GraphQLPortFlag,
 		utils.GraphQLCORSDomainFlag,
 		utils.GraphQLVirtualHostsFlag,
-		utils.RPCApiFlag,
+		utils.HTTPApiFlag,
+		utils.HTTPPathPrefixFlag,
 		utils.WSEnabledFlag,
 		utils.WSListenAddrFlag,
 		utils.WSPortFlag,
 		utils.WSApiFlag,
 		utils.WSAllowedOriginsFlag,
+		utils.WSPathPrefixFlag,
 		utils.IPCDisabledFlag,
 		utils.IPCPathFlag,
 		utils.InsecureUnlockAllowedFlag,
-		utils.RPCGlobalGasCap,
-	}
-
-	whisperFlags = []cli.Flag{
-		utils.WhisperEnabledFlag,
-		utils.WhisperMaxMessageSizeFlag,
-		utils.WhisperMinPOWFlag,
-		utils.WhisperRestrictConnectionBetweenLightClientsFlag,
+		utils.RPCGlobalGasCapFlag,
+		utils.RPCGlobalTxFeeCapFlag,
+		utils.AllowUnprotectedTxs,
 	}
 
 	metricsFlags = []cli.Flag{
 		utils.MetricsEnabledFlag,
 		utils.MetricsEnabledExpensiveFlag,
+		utils.MetricsHTTPFlag,
+		utils.MetricsPortFlag,
 		utils.MetricsEnableInfluxDBFlag,
 		utils.MetricsInfluxDBEndpointFlag,
 		utils.MetricsInfluxDBDatabaseFlag,
 		utils.MetricsInfluxDBUsernameFlag,
 		utils.MetricsInfluxDBPasswordFlag,
 		utils.MetricsInfluxDBTagsFlag,
+		utils.MetricsEnableInfluxDBV2Flag,
+		utils.MetricsInfluxDBTokenFlag,
+		utils.MetricsInfluxDBBucketFlag,
+		utils.MetricsInfluxDBOrganizationFlag,
 	}
 )
 
@@ -220,7 +199,7 @@ func init() {
 	// Initialize the CLI app and start Geth
 	app.Action = geth
 	app.HideVersion = true // we have a command to print the version
-	app.Copyright = "Copyright 2013-2019 The Elastos.ELA.SideChain.ESC Authors"
+	app.Copyright = "Copyright 2013-2021 The Elastos.ELA.SideChain.ESC Authors"
 	app.Commands = []cli.Command{
 		// See chaincmd.go:
 		initCommand,
@@ -228,10 +207,9 @@ func init() {
 		exportCommand,
 		importPreimagesCommand,
 		exportPreimagesCommand,
-		copydbCommand,
 		removedbCommand,
 		dumpCommand,
-		inspectCommand,
+		dumpGenesisCommand,
 		// See accountcmd.go:
 		accountCommand,
 		walletCommand,
@@ -243,11 +221,16 @@ func init() {
 		makecacheCommand,
 		makedagCommand,
 		versionCommand,
+		versionCheckCommand,
 		licenseCommand,
 		// See config.go
 		dumpConfigCommand,
-		// See retesteth.go
-		retestethCommand,
+		// see dbcmd.go
+		dbCommand,
+		// See cmd/utils/flags_legacy.go
+		utils.ShowDeprecated,
+		// See snapshot.go
+		snapshotCommand,
 	}
 	sort.Sort(cli.CommandsByName(app.Commands))
 
@@ -255,23 +238,14 @@ func init() {
 	app.Flags = append(app.Flags, rpcFlags...)
 	app.Flags = append(app.Flags, consoleFlags...)
 	app.Flags = append(app.Flags, debug.Flags...)
-	app.Flags = append(app.Flags, whisperFlags...)
 	app.Flags = append(app.Flags, metricsFlags...)
 
 	app.Before = func(ctx *cli.Context) error {
-		logdir := ""
-		if ctx.GlobalBool(utils.DashboardEnabledFlag.Name) {
-			logdir = (&node.Config{DataDir: utils.MakeDataDir(ctx)}).ResolvePath("logs")
-		}
-		if err := debug.Setup(ctx, logdir); err != nil {
-			return err
-		}
-		return nil
+		return debug.Setup(ctx)
 	}
-
 	app.After = func(ctx *cli.Context) error {
 		debug.Exit()
-		console.Stdin.Close() // Resets terminal mode.
+		prompt.Stdin.Close() // Resets terminal mode.
 		return nil
 	}
 }
@@ -286,10 +260,27 @@ func main() {
 // prepare manipulates memory cache allowance and setups metric system.
 // This function should be called before launching devp2p stack.
 func prepare(ctx *cli.Context) {
+	// If we're running a known preset, log it for convenience.
+	switch {
+	case ctx.GlobalIsSet(utils.RopstenFlag.Name):
+		log.Info("Starting Geth on Ropsten testnet...")
+
+	case ctx.GlobalIsSet(utils.RinkebyFlag.Name):
+		log.Info("Starting Geth on Rinkeby testnet...")
+
+	case ctx.GlobalIsSet(utils.GoerliFlag.Name):
+		log.Info("Starting Geth on Görli testnet...")
+
+	case ctx.GlobalIsSet(utils.DeveloperFlag.Name):
+		log.Info("Starting Geth in ephemeral dev mode...")
+
+	case !ctx.GlobalIsSet(utils.NetworkIdFlag.Name):
+		log.Info("Starting Geth on Ethereum mainnet...")
+	}
 	// If we're a full node on mainnet without --cache specified, bump default cache allowance
 	if ctx.GlobalString(utils.SyncModeFlag.Name) != "light" && !ctx.GlobalIsSet(utils.CacheFlag.Name) && !ctx.GlobalIsSet(utils.NetworkIdFlag.Name) {
 		// Make sure we're not on any supported preconfigured testnet either
-		if !ctx.GlobalIsSet(utils.TestnetFlag.Name) && !ctx.GlobalIsSet(utils.RinkebyFlag.Name) && !ctx.GlobalIsSet(utils.GoerliFlag.Name) && !ctx.GlobalIsSet(utils.DeveloperFlag.Name) {
+		if !ctx.GlobalIsSet(utils.RopstenFlag.Name) && !ctx.GlobalIsSet(utils.RinkebyFlag.Name) && !ctx.GlobalIsSet(utils.GoerliFlag.Name) && !ctx.GlobalIsSet(utils.DeveloperFlag.Name) {
 			// Nope, we're really on mainnet. Bump that cache up!
 			log.Info("Bumping default cache on mainnet", "provided", ctx.GlobalInt(utils.CacheFlag.Name), "updated", 4096)
 			ctx.GlobalSet(utils.CacheFlag.Name, strconv.Itoa(4096))
@@ -300,25 +291,6 @@ func prepare(ctx *cli.Context) {
 		log.Info("Dropping default light client cache", "provided", ctx.GlobalInt(utils.CacheFlag.Name), "updated", 128)
 		ctx.GlobalSet(utils.CacheFlag.Name, strconv.Itoa(128))
 	}
-	// Cap the cache allowance and tune the garbage collector
-	var mem gosigar.Mem
-	// Workaround until OpenBSD support lands into gosigar
-	// Check https://github.com/elastic/gosigar#supported-platforms
-	if runtime.GOOS != "openbsd" {
-		if err := mem.Get(); err == nil {
-			allowance := int(mem.Total / 1024 / 1024 / 3)
-			if cache := ctx.GlobalInt(utils.CacheFlag.Name); cache > allowance {
-				log.Warn("Sanitizing cache to Go's GC limits", "provided", cache, "updated", allowance)
-				ctx.GlobalSet(utils.CacheFlag.Name, strconv.Itoa(allowance))
-			}
-		}
-	}
-	// Ensure Go's GC ignores the database cache for trigger percentage
-	cache := ctx.GlobalInt(utils.CacheFlag.Name)
-	gogc := math.Max(20, math.Min(100, 100/(float64(cache)/1024)))
-
-	log.Debug("Sanitizing Go's GC trigger", "percent", int(gogc))
-	godebug.SetGCPercent(int(gogc))
 
 	// Start metrics export if enabled
 	utils.SetupMetrics(ctx)
@@ -334,174 +306,27 @@ func geth(ctx *cli.Context) error {
 	if args := ctx.Args(); len(args) > 0 {
 		return fmt.Errorf("invalid command: %q", args[0])
 	}
+
 	prepare(ctx)
-	node := makeFullNode(ctx)
-	defer node.Close()
-	startNode(ctx, node)
-	node.Wait()
+	stack, backend := makeFullNode(ctx)
+	defer stack.Close()
+
+	startNode(ctx, stack, backend)
+	stack.Wait()
 	return nil
-}
-
-// calculate the ELA mainchain address from the sidechain (ie. this chain)
-// genesis block hash for corresponding crosschain transactions
-// refer to https://github.com/elastos/Elastos.ELA.Client/blob/dev/cli/wallet/wallet.go
-// for the original ELA-CLI implementation
-func calculateGenesisAddress(genesisBlockHash string) (string, error) {
-	// unlike Ethereum, the ELA hash values do not contain 0x prefix
-	if strings.HasPrefix(genesisBlockHash, "0x") {
-		genesisBlockHash = genesisBlockHash[2:]
-	}
-	genesisBlockBytes, err := hex.DecodeString(genesisBlockHash)
-	if err != nil {
-		return "", errors.New("genesis block hash to bytes failed")
-	}
-	reversedGenesisBlockBytes := elacom.BytesReverse(genesisBlockBytes)
-	reversedGenesisBlockStr := elacom.BytesToHexString(reversedGenesisBlockBytes)
-
-	log.Info(fmt.Sprintf("genesis program hash: %v", reversedGenesisBlockStr))
-
-	buf := new(bytes.Buffer)
-	buf.WriteByte(byte(len(reversedGenesisBlockBytes)))
-	buf.Write(reversedGenesisBlockBytes)
-	buf.WriteByte(byte(elacom.CROSSCHAIN))
-
-	sum168 := func(prefix byte, code []byte) []byte {
-		hash := sha256.Sum256(code)
-		md160 := ripemd160.New()
-		md160.Write(hash[:])
-		return md160.Sum([]byte{prefix})
-	}
-	genesisProgramHash, err := elacom.Uint168FromBytes(sum168(byte(contract.PrefixCrossChain), buf.Bytes()))
-	if err != nil {
-		return "", errors.New("genesis block bytes to program hash failed")
-	}
-
-	genesisAddress, err := genesisProgramHash.ToAddress()
-	if err != nil {
-		return "", errors.New("genesis block hash to genesis address failed")
-	}
-	log.Info(fmt.Sprintf("genesis address: %v ", genesisAddress))
-
-	return genesisAddress, nil
-}
-
-func startSpv(ctx *cli.Context, stack *node.Node) {
-
-	var SpvDataDir string
-	switch {
-	case ctx.GlobalIsSet(utils.DataDirFlag.Name):
-		SpvDataDir = ctx.GlobalString(utils.DataDirFlag.Name)
-	case ctx.GlobalBool(utils.DeveloperFlag.Name):
-		SpvDataDir = "" // unless explicitly requested, use memory databases
-	case ctx.GlobalBool(utils.TestnetFlag.Name):
-		SpvDataDir = filepath.Join(node.DefaultDataDir(), "testnet")
-	case ctx.GlobalBool(utils.RinkebyFlag.Name):
-		SpvDataDir = filepath.Join(node.DefaultDataDir(), "rinkeby")
-	case  ctx.GlobalBool(utils.GoerliFlag.Name):
-		SpvDataDir = filepath.Join(node.DefaultDataDir(), "goerli")
-	default:
-		SpvDataDir = node.DefaultDataDir()
-	}
-
-	var spvCfg = &spv.Config{
-		DataDir: SpvDataDir,
-	}
-	// prepare the SPV service config parameters
-	switch {
-	case ctx.GlobalBool(utils.TestnetFlag.Name):
-		spvCfg.ActiveNet = "t"
-
-	case ctx.GlobalBool(utils.RinkebyFlag.Name):
-		spvCfg.ActiveNet = "r"
-	case ctx.GlobalBool(utils.GoerliFlag.Name):
-		spvCfg.ActiveNet = "g"
-	}
-
-	// prepare to start the SPV module
-	// if --spvmoniaddr commandline parameter is present, use the parameter value
-	// as the ELA mainchain address for the SPV module to monitor on
-	// if no --spvmoniaddr commandline parameter is provided, use the sidechain genesis block hash
-	// to generate the corresponding ELA mainchain address for the SPV module to monitor on
-	var dynamicArbiterHeight uint64
-	if ctx.GlobalString(utils.SpvMonitoringAddrFlag.Name) != "" {
-		// --spvmoniaddr parameter is provided, set the SPV monitor address accordingly
-		log.Info("SPV Start Monitoring... ", "SpvMonitoringAddr", ctx.GlobalString(utils.SpvMonitoringAddrFlag.Name))
-		spvCfg.GenesisAddress = ctx.GlobalString(utils.SpvMonitoringAddrFlag.Name)
-	} else {
-		// --spvmoniaddr parameter is not provided
-		// get the Ethereum node service to get the genesis block hash
-		var fullnode *eth.Ethereum
-		var lightnode *les.LightEthereum
-		var ghash common.Hash
-
-		// light node and full node are different types of node services
-		if ctx.GlobalString(utils.SyncModeFlag.Name) == "light" {
-			if err := stack.Service(&lightnode); err != nil {
-				utils.Fatalf("Blockchain not running: %v", err)
-			}
-			ghash = lightnode.BlockChain().Genesis().Hash()
-			dynamicArbiterHeight = lightnode.BlockChain().Config().DynamicArbiterHeight
-		} else {
-			if err := stack.Service(&fullnode); err != nil {
-				utils.Fatalf("Blockchain not running: %v", err)
-			}
-			ghash = fullnode.BlockChain().Genesis().Hash()
-			dynamicArbiterHeight = fullnode.BlockChain().Config().DynamicArbiterHeight
-		}
-
-		// calculate ELA mainchain address from the genesis block hash and set the SPV monitor address accordingly
-		log.Info(fmt.Sprintf("Genesis block hash: %v", ghash.String()))
-		if gaddr, err := calculateGenesisAddress(ghash.String()); err != nil {
-			utils.Fatalf("Cannot calculate: %v", err)
-		} else {
-			log.Info(fmt.Sprintf("SPV Start Monitoring... : %v", gaddr))
-			spvCfg.GenesisAddress = gaddr
-		}
-	}
-
-	spv.GetDefaultSingerAddr = func() (common.Address) {
-		var addr common.Address
-		if wallets := stack.AccountManager().Wallets(); len(wallets) > 0 {
-			if accounts := wallets[0].Accounts(); len(accounts) > 0 {
-				addr = accounts[0].Address
-			}
-		}
-
-		return addr
-	}
-
-	client, err := stack.Attach()
-	if err != nil {
-		log.Error("Attach client: ", "err", err)
-	}
-	if spvService, err := spv.NewService(spvCfg,client, stack.EventMux(), dynamicArbiterHeight); err != nil {
-		utils.Fatalf("SPV service init error: %v", err)
-	} else {
-		MinedBlockSub := stack.EventMux().Subscribe(events.MinedBlockEvent{})
-		OnDutySub := stack.EventMux().Subscribe(events.OnDutyEvent{})
-		go spv.MinedBroadcastLoop(MinedBlockSub, OnDutySub)
-		spvService.Start()
-		stack.EventMux().Post(events.InitCurrentProducers{})
-		spv.InitNextTurnDposInfo()
-	}
 }
 
 // startNode boots up the system node and all registered protocols, after which
 // it unlocks any requested accounts, and starts the RPC/IPC interfaces and the
 // miner.
-func startNode(ctx *cli.Context, stack *node.Node) {
+func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend) {
 	debug.Memsize.Add("node", stack)
 
 	// Start up the node itself
-	utils.StartNode(stack)
+	utils.StartNode(ctx, stack)
 
 	// Unlock any account specifically requested
 	unlockAccounts(ctx, stack)
-
-	//start the SPV service
-	//log.Info(fmt.Sprintf("Starting SPV service with config: %+v \n", *spvCfg))
-	startSpv(ctx, stack)
-	startSmallCrossTx(ctx, stack)
 
 	// Register wallet event handlers to open and auto-derive wallets
 	events := make(chan accounts.WalletEvent, 16)
@@ -513,25 +338,6 @@ func startNode(ctx *cli.Context, stack *node.Node) {
 		utils.Fatalf("Failed to attach to self: %v", err)
 	}
 	ethClient := ethclient.NewClient(rpcClient)
-
-	// Set contract backend for ethereum service if local node
-	// is serving LES requests.
-	if ctx.GlobalInt(utils.LightLegacyServFlag.Name) > 0 || ctx.GlobalInt(utils.LightServeFlag.Name) > 0 {
-		var ethService *eth.Ethereum
-		if err := stack.Service(&ethService); err != nil {
-			utils.Fatalf("Failed to retrieve ethereum service: %v", err)
-		}
-		ethService.SetContractBackend(ethClient)
-	}
-	// Set contract backend for les service if local node is
-	// running as a light client.
-	if ctx.GlobalString(utils.SyncModeFlag.Name) == "light" {
-		var lesService *les.LightEthereum
-		if err := stack.Service(&lesService); err != nil {
-			utils.Fatalf("Failed to retrieve light ethereum service: %v", err)
-		}
-		lesService.SetContractBackend(ethClient)
-	}
 
 	go func() {
 		// Open any wallets already attached
@@ -584,7 +390,7 @@ func startNode(ctx *cli.Context, stack *node.Node) {
 				if timestamp := time.Unix(int64(done.Latest.Time), 0); time.Since(timestamp) < 10*time.Minute {
 					log.Info("Synchronisation completed", "latestnum", done.Latest.Number, "latesthash", done.Latest.Hash(),
 						"age", common.PrettyAge(timestamp))
-					stack.Stop()
+					stack.Close()
 				}
 			}
 		}()
@@ -596,25 +402,17 @@ func startNode(ctx *cli.Context, stack *node.Node) {
 		if ctx.GlobalString(utils.SyncModeFlag.Name) == "light" {
 			utils.Fatalf("Light clients do not support mining")
 		}
-		var ethereum *eth.Ethereum
-		if err := stack.Service(&ethereum); err != nil {
+		ethBackend, ok := backend.(*eth.EthAPIBackend)
+		if !ok {
 			utils.Fatalf("Ethereum service not running: %v", err)
 		}
 		// Set the gas price to the limits from the CLI and start mining
-		gasprice := utils.GlobalBig(ctx, utils.MinerLegacyGasPriceFlag.Name)
-		if ctx.IsSet(utils.MinerGasPriceFlag.Name) {
-			gasprice = utils.GlobalBig(ctx, utils.MinerGasPriceFlag.Name)
-		}
-		ethereum.TxPool().SetGasPrice(gasprice)
-
-		threads := ctx.GlobalInt(utils.MinerLegacyThreadsFlag.Name)
-		if ctx.GlobalIsSet(utils.MinerThreadsFlag.Name) {
-			threads = ctx.GlobalInt(utils.MinerThreadsFlag.Name)
-		}
-		if ethereum.Engine() != ethereum.BlockChain().GetDposEngine() {
-			if err := ethereum.StartMining(threads); err != nil {
-				utils.Fatalf("Failed to start mining: %v", err)
-			}
+		gasprice := utils.GlobalBig(ctx, utils.MinerGasPriceFlag.Name)
+		ethBackend.TxPool().SetGasPrice(gasprice)
+		// start mining
+		threads := ctx.GlobalInt(utils.MinerThreadsFlag.Name)
+		if err := ethBackend.StartMining(threads); err != nil {
+			utils.Fatalf("Failed to start mining: %v", err)
 		}
 	}
 }
@@ -642,25 +440,4 @@ func unlockAccounts(ctx *cli.Context, stack *node.Node) {
 	for i, account := range unlocks {
 		unlockAccount(ks, account, i, passwords)
 	}
-}
-
-func startSmallCrossTx(ctx *cli.Context, stack *node.Node) {
-	var datadir string
-	switch {
-	case ctx.GlobalIsSet(utils.DataDirFlag.Name):
-		datadir = ctx.GlobalString(utils.DataDirFlag.Name)
-	case ctx.GlobalBool(utils.DeveloperFlag.Name):
-		datadir = "" // unless explicitly requested, use memory databases
-	case ctx.GlobalBool(utils.TestnetFlag.Name):
-		datadir = filepath.Join(node.DefaultDataDir(), "testnet")
-	case ctx.GlobalBool(utils.RinkebyFlag.Name):
-		datadir = filepath.Join(node.DefaultDataDir(), "rinkeby")
-	case  ctx.GlobalBool(utils.GoerliFlag.Name):
-		datadir = filepath.Join(node.DefaultDataDir(), "goerli")
-	default:
-		datadir = node.DefaultDataDir()
-	}
-	smallcrosstx.SmallCrossTxInit(datadir, stack.EventMux())
-
-	withdrawfailedtx.FailedWithrawInit(datadir, stack.EventMux())
 }

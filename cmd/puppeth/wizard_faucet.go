@@ -38,7 +38,7 @@ func (w *wizard) deployFaucet() {
 	infos, err := checkFaucet(client, w.network)
 	if err != nil {
 		infos = &faucetInfos{
-			node:    &nodeInfos{port: 20638, peersTotal: 25},
+			node:    &nodeInfos{port: 30303, peersTotal: 25},
 			port:    80,
 			host:    client.server,
 			amount:  1,
@@ -101,6 +101,21 @@ func (w *wizard) deployFaucet() {
 			fmt.Printf("What is the reCaptcha secret key to verify authentications? (won't be echoed)\n")
 			infos.captchaSecret = w.readPassword()
 		}
+	}
+	// Accessing the Twitter API requires a bearer token, request it
+	if infos.twitterToken != "" {
+		fmt.Println()
+		fmt.Println("Reuse previous Twitter API token (y/n)? (default = yes)")
+		if !w.readDefaultYesNo(true) {
+			infos.twitterToken = ""
+		}
+	}
+	if infos.twitterToken == "" {
+		// No previous twitter token (or old one discarded)
+		fmt.Println()
+		fmt.Println()
+		fmt.Printf("What is the Twitter API app Bearer token?\n")
+		infos.twitterToken = w.readString()
 	}
 	// Figure out where the user wants to store the persistent data
 	fmt.Println()

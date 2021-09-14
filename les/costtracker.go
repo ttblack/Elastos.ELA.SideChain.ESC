@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/common/mclock"
-	"github.com/elastos/Elastos.ELA.SideChain.ESC/eth"
+	"github.com/elastos/Elastos.ELA.SideChain.ESC/eth/ethconfig"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/ethdb"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/les/flowcontrol"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/log"
@@ -137,7 +137,7 @@ type costTracker struct {
 
 // newCostTracker creates a cost tracker and loads the cost factor statistics from the database.
 // It also returns the minimum capacity that can be assigned to any peer.
-func newCostTracker(db ethdb.Database, config *eth.Config) (*costTracker, uint64) {
+func newCostTracker(db ethdb.Database, config *ethconfig.Config) (*costTracker, uint64) {
 	utilTarget := float64(config.LightServ) * flowcontrol.FixedPointMultiplier / 100
 	ct := &costTracker{
 		db:         db,
@@ -269,6 +269,7 @@ func (ct *costTracker) gfLoop() {
 			log.Debug("global cost factor saved", "value", factor)
 		}
 		saveTicker := time.NewTicker(time.Minute * 10)
+		defer saveTicker.Stop()
 
 		for {
 			select {
