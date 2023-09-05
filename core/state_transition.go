@@ -472,18 +472,46 @@ func (st *StateTransition) TransitionDb() (result *ExecutionResult, err error) {
 		st.state.AddBalance(st.msg.From(), new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), st.gasPrice)) // Refund the cost
 	} else {
 		minerFee := new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), st.gasPrice)
-		num := len(st.evm.ChainConfig().DeveloperContract)
-		if num > 0 && st.evm.ChainConfig().IsdeveloperSplitfeeTime(st.evm.Time.Uint64()) {
-			minerFee = big.NewInt(0).Div(minerFee, big.NewInt(2))
-			subFee := minerFee.Div(minerFee, big.NewInt(int64(num)))
-			for _, account := range st.evm.ChainConfig().DeveloperContract {
-				developerAddress := common.HexToAddress(account)
-				st.state.AddBalance(developerAddress, subFee)
+		list := evm.InternalCallList
+		var cost uint64 = 0
+		for _, data := range list {
+			feeGas := st.onEVMExecuted(data)
+			cost = cost + feeGas
+			fee := big.NewInt(0).Mul(big.NewInt(0).SetUint64(feeGas), st.gasPrice)
+			minerFee = minerFee.Sub(minerFee, fee)
+		}
+		gasUsed := st.gasUsed()
+		gasUsed = gasUsed - cost
+		feesplit, err := st.evm.StateDB.GetFeeSplit(st.to())
+		if err == nil && feesplit != nil {
+			developerAddress := feesplit.WithdrawerAddress
+			if developerAddress != blackaddr {
+				used := gasUsed * feesplit.ShareHolding.Uint64() / 100
+				cost = cost + used
+				addVal := big.NewInt(0).Mul(big.NewInt(0).SetUint64(used), st.gasPrice)
+				st.state.AddBalance(feesplit.WithdrawerAddress, addVal)
+				minerFee = minerFee.Sub(minerFee, addVal)
 			}
 		}
 		st.state.AddBalance(st.evm.Coinbase, minerFee)
 	}
 	return &ExecutionResult{st.gasUsed(), vmerr, ret}, err
+}
+
+func (st *StateTransition) onEVMExecuted(internalCall *vm.InternalCall) uint64 {
+	if internalCall == nil {
+		return 0
+	}
+	feesplit, err := st.evm.StateDB.GetFeeSplit(internalCall.To)
+	if err == nil && feesplit != nil {
+		feeGas := internalCall.GasCost * feesplit.ShareHolding.Uint64() / 100
+		gas := big.NewInt(0).SetUint64(feeGas)
+		fee := new(big.Int).Mul(gas, st.gasPrice)
+		fmt.Println("onEVMExecuted ", "fee", fee, "WithdrawerAddress", feesplit.WithdrawerAddress.String())
+		st.state.AddBalance(feesplit.WithdrawerAddress, fee)
+		return gas.Uint64()
+	}
+	return 0
 }
 
 func (st *StateTransition) dealSmallCrossTx() (isSmallCrossTx, verifyed bool, txHash string, err error) {

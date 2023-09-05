@@ -628,6 +628,11 @@ web3._extend({
 			name: 'getFrozenAccounts',
 			call: 'eth_getFrozenAccounts',
 			params: 0,
+		}),
+		new web3._extend.Method({
+			name: 'getFeeSplit',
+			call: 'eth_getFeeSplit',
+			params: 1,
 		})
 	],
 	properties: [

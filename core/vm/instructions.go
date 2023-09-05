@@ -712,7 +712,7 @@ func opCall(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]byt
 		scope.Memory.Set(retOffset.Uint64(), retSize.Uint64(), ret)
 	}
 	scope.Contract.Gas += returnGas
-
+	scope.Contract.OpInterCall(scope.Contract.CallerAddress, scope.Contract.self.Address(), toAddr, returnGas)
 	interpreter.returnData = ret
 	return ret, nil
 }
@@ -751,7 +751,7 @@ func opCallCode(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([
 
 	interpreter.returnData = ret
 
-	scope.Contract.OpInterCall(toAddr, returnGas)
+	scope.Contract.OpInterCall(scope.Contract.CallerAddress, scope.Contract.self.Address(), toAddr, returnGas)
 
 	return ret, nil
 }
@@ -782,8 +782,7 @@ func opDelegateCall(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext
 	scope.Contract.Gas += returnGas
 
 	interpreter.returnData = ret
-
-	scope.Contract.OpInterCall(toAddr, returnGas)
+	scope.Contract.OpInterCall(scope.Contract.CallerAddress, scope.Contract.self.Address(), toAddr, returnGas)
 
 	return ret, nil
 }
@@ -815,7 +814,7 @@ func opStaticCall(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) 
 
 	interpreter.returnData = ret
 
-	scope.Contract.OpInterCall(toAddr, returnGas)
+	scope.Contract.OpInterCall(scope.Contract.CallerAddress, scope.Contract.self.Address(), toAddr, returnGas)
 	return ret, nil
 }
 

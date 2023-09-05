@@ -39,6 +39,7 @@ import (
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/consensus/ethash"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/core"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/core/rawdb"
+	"github.com/elastos/Elastos.ELA.SideChain.ESC/core/state"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/core/types"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/core/vm"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/crypto"
@@ -642,10 +643,10 @@ func (s *PublicBlockChainAPI) GetHeaderByHash(ctx context.Context, hash common.H
 }
 
 // GetBlockByNumber returns the requested canonical block.
-// * When blockNr is -1 the chain head is returned.
-// * When blockNr is -2 the pending chain head is returned.
-// * When fullTx is true all transactions in the block are returned, otherwise
-//   only the transaction hash is returned.
+//   - When blockNr is -1 the chain head is returned.
+//   - When blockNr is -2 the pending chain head is returned.
+//   - When fullTx is true all transactions in the block are returned, otherwise
+//     only the transaction hash is returned.
 func (s *PublicBlockChainAPI) GetBlockByNumber(ctx context.Context, number rpc.BlockNumber, fullTx bool) (map[string]interface{}, error) {
 	block, err := s.b.BlockByNumber(ctx, number)
 	if block != nil && err == nil {
@@ -811,6 +812,20 @@ func (s *PublicBlockChainAPI) SendInvalidWithdrawTransaction(ctx context.Context
 func (s *PublicBlockChainAPI) GetFrozenAccounts(ctx context.Context) ([]string, error) {
 	list := s.b.ChainConfig().FrozeAccountList
 	return list, nil
+}
+
+func (s *PublicBlockChainAPI) GetFeeSplit(ctx context.Context, contractAddress string) (*types.FeeSplit, error) {
+	if !common.IsHexAddress(contractAddress) {
+		return nil, fmt.Errorf("[IsRegisteredFeeSplit] error %s", contractAddress)
+	}
+	key := state.FEESPLIT_PRE + contractAddress
+	data, err := s.b.ChainDb().Get([]byte(key))
+	if err != nil {
+		return nil, err
+	}
+	feesplit := new(types.FeeSplit)
+	err = feesplit.Deserialize(data)
+	return feesplit, err
 }
 
 // CallArgs represents the arguments for a call.

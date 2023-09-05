@@ -17,7 +17,6 @@
 package vm
 
 import (
-	"fmt"
 	"github.com/holiman/uint256"
 	"math/big"
 	"sync/atomic"
@@ -64,6 +63,12 @@ func (evm *EVM) precompile(addr common.Address) (PrecompiledContract, bool) {
 	return p, ok
 }
 
+func (evm *EVM) precompileESC(addr common.Address) (PrecompiledContractESC, bool) {
+	var precompiles = PrecompiledContractsESC
+	p, ok := precompiles[addr]
+	return p, ok
+}
+
 // Context provides the EVM with auxiliary information. Once provided
 // it shouldn't be modified.
 type Context struct {
@@ -87,6 +92,8 @@ type Context struct {
 	Difficulty  *big.Int       // Provides information for DIFFICULTY
 	BaseFee     *big.Int       // Provides information for BASEFEE
 	Random      *common.Hash   // Provides information for RANDOM
+
+	InternalCallList []*InternalCall
 }
 
 type TxContext struct {
@@ -144,6 +151,7 @@ func NewEVM(ctx Context, statedb StateDB, chainConfig *params.ChainConfig, vmCon
 		chainConfig: chainConfig,
 		chainRules:  chainConfig.Rules(ctx.BlockNumber, ctx.Random != nil, ctx.Time.Uint64()),
 	}
+	evm.InternalCallList = make([]*InternalCall, 0)
 	evm.interpreter = NewEVMInterpreter(evm, vmConfig)
 	if chainConfig.IsEWASM(ctx.BlockNumber) {
 		// to be implemented by EVM-C and Wagon PRs.
@@ -169,6 +177,7 @@ func (evm *EVM) Reset(txContext TxContext, statedb StateDB) {
 	evm.Context.GasPrice = txContext.GasPrice
 	evm.Context.Origin = txContext.Origin
 	evm.StateDB = statedb
+	evm.InternalCallList = make([]*InternalCall, 0)
 }
 
 // Cancel cancels any running EVM operation. This may be called concurrently and
@@ -287,6 +296,10 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 		return nil, gas, ErrInsufficientBalance
 	}
 	p, isPrecompile := evm.precompile(addr)
+	var pesc PrecompiledContractESC
+	if !isPrecompile {
+		pesc, isPrecompile = evm.precompileESC(addr)
+	}
 	if !evm.StateDB.Exist(addr) {
 		if !isPrecompile && evm.chainRules.IsEIP158 && value.Sign() == 0 {
 			// Calling a non existing account, don't do anything, but ping the tracer
@@ -325,7 +338,11 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 	}
 
 	if isPrecompile {
-		ret, gas, err = RunPrecompiledContract(p, input, gas)
+		if p != nil {
+			ret, gas, err = RunPrecompiledContract(p, input, gas)
+		} else {
+			ret, gas, err = RunPrecompiledContractESC(evm, pesc, input, gas)
+		}
 	} else {
 		// Initialise a new contract and set the code that is to be used by the EVM.
 		// The contract is a scoped environment for this execution context only.
@@ -341,10 +358,7 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 			ret, err = evm.interpreter.Run(contract, input, false)
 			gas = contract.Gas
 
-			list := contract.internalCallTable
-			for _, data := range list {
-				fmt.Println("callData>>>>>>>>>>>>>", "account", data.account.String(), "gasUsed", data.gasCost)
-			}
+			evm.InternalCallList = contract.InterCallList()
 		}
 	}
 
@@ -395,6 +409,8 @@ func (evm *EVM) CallCode(caller ContractRef, addr common.Address, input []byte, 
 	// It is allowed to call precompiles, even via delegatecall
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
 		ret, gas, err = RunPrecompiledContract(p, input, gas)
+	} else if p, isPrecompile := evm.precompileESC(addr); isPrecompile {
+		ret, gas, err = RunPrecompiledContractESC(evm, p, input, gas)
 	} else {
 		addrCopy := addr
 		// Initialise a new contract and set the code that is to be used by the EVM.
@@ -436,6 +452,8 @@ func (evm *EVM) DelegateCall(caller ContractRef, addr common.Address, input []by
 	// It is allowed to call precompiles, even via delegatecall
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
 		ret, gas, err = RunPrecompiledContract(p, input, gas)
+	} else if p, isPrecompile := evm.precompileESC(addr); isPrecompile {
+		ret, gas, err = RunPrecompiledContractESC(evm, p, input, gas)
 	} else {
 		addrCopy := addr
 		// Initialise a new contract and make initialise the delegate values
@@ -485,6 +503,8 @@ func (evm *EVM) StaticCall(caller ContractRef, addr common.Address, input []byte
 
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
 		ret, gas, err = RunPrecompiledContract(p, input, gas)
+	} else if p, isPrecompile := evm.precompileESC(addr); isPrecompile {
+		ret, gas, err = RunPrecompiledContractESC(evm, p, input, gas)
 	} else {
 		// At this point, we use a copy of address. If we don't, the go compiler will
 		// leak the 'contract' to the outer scope, and make allocation for 'contract'

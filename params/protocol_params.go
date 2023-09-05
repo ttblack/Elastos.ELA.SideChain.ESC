@@ -152,6 +152,7 @@ const (
 	PledgeBillVerifyGas       uint64 = 1000
 	GetPledgeBillTokenID      uint64 = 0
 	GetPledgeBillTokenDetail  uint64 = 0
+	RegisterFeeSplitGas       uint64 = 80000
 	Bls12381G1AddGas          uint64 = 600    // Price for BLS12-381 elliptic curve G1 point addition
 	Bls12381G1MulGas          uint64 = 12000  // Price for BLS12-381 elliptic curve G1 point scalar multiplication
 	Bls12381G2AddGas          uint64 = 4500   // Price for BLS12-381 elliptic curve G2 point addition
@@ -183,4 +184,5 @@ var (
 	PledgeBillTokenID      = big.NewInt(1004)
 	PledgeBillTokenDetail  = big.NewInt(1005)
 	PledgeBillTokenVersion = big.NewInt(1006)
+	FeeSplit               = big.NewInt(1007)
 )

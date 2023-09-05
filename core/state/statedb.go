@@ -27,6 +27,7 @@ import (
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/common"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/core/types"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/crypto"
+	"github.com/elastos/Elastos.ELA.SideChain.ESC/ethdb"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/log"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/metrics"
 	"github.com/elastos/Elastos.ELA.SideChain.ESC/params"
@@ -92,6 +93,8 @@ type StateDB struct {
 
 	accessList *accessList
 
+	feesplits *feesplit
+
 	// Transient storage
 	transientStorage transientStorage
 
@@ -134,6 +137,7 @@ func New(root common.Hash, db Database) (*StateDB, error) {
 		preimages:            make(map[common.Hash][]byte),
 		journal:              newJournal(),
 		accessList:           newAccessList(),
+		feesplits:            newfeesplit(db.TrieDB().DiskDB().(ethdb.KeyValueStore)),
 	}, nil
 }
 
@@ -165,6 +169,8 @@ func (self *StateDB) Reset(root common.Hash) error {
 	self.logs = make(map[common.Hash][]*types.Log)
 	self.logSize = 0
 	self.preimages = make(map[common.Hash][]byte)
+	self.accessList = newAccessList()
+	self.feesplits = newfeesplit(self.db.TrieDB().DiskDB().(ethdb.KeyValueStore))
 	self.clearJournalAndRefund()
 	return nil
 }
@@ -638,6 +644,7 @@ func (self *StateDB) Copy() *StateDB {
 		logSize:              self.logSize,
 		preimages:            make(map[common.Hash][]byte, len(self.preimages)),
 		journal:              newJournal(),
+		feesplits:            newfeesplit(self.db.TrieDB().DiskDB().(ethdb.KeyValueStore)),
 	}
 	// Copy the dirty states, logs, and preimages
 	for addr := range self.journal.dirties {
@@ -693,6 +700,7 @@ func (self *StateDB) Copy() *StateDB {
 	// to not blow up if we ever decide copy it in the middle of a transaction
 	state.accessList = self.accessList.Copy()
 	state.transientStorage = self.transientStorage.Copy()
+	state.feesplits = self.feesplits.Copy()
 
 	return state
 }
@@ -799,7 +807,7 @@ func (self *StateDB) clearJournalAndRefund() {
 func (self *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	// Finalize any pending changes and merge everything into the tries
 	self.IntermediateRoot(deleteEmptyObjects)
-
+	self.feesplits.Commit()
 	// Commit objects to the trie, measuring the elapsed time
 	for addr := range self.stateObjectsDirty {
 		if obj := self.stateObjects[addr]; !obj.deleted {
@@ -914,4 +922,20 @@ func (self *StateDB) AddressInAccessList(addr common.Address) bool {
 // SlotInAccessList returns true if the given (address, slot)-tuple is in the access list.
 func (self *StateDB) SlotInAccessList(addr common.Address, slot common.Hash) (addressPresent bool, slotPresent bool) {
 	return self.accessList.Contains(addr, slot)
+}
+
+func (self *StateDB) AddFeeSplit(split *types.FeeSplit) error {
+	if self.feesplits.ContainsAddress(split.ContractAddress) {
+		return errors.New("already registered")
+	}
+
+	if self.feesplits.Add(split.ContractAddress, split) {
+		split.TxHash = self.thash
+		self.journal.append(feesplitChange{contract: &split.ContractAddress})
+	}
+	return nil
+}
+
+func (self *StateDB) GetFeeSplit(address common.Address) (*types.FeeSplit, error) {
+	return self.feesplits.GetFeeSplit(address)
 }
